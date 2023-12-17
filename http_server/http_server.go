@@ -156,6 +156,7 @@ func getCanonicalRequest(c echo.Context, body []byte) (string, error) {
 	sort.Strings(signedHeaders) // must be sorted alphabetically
 	for _, header := range signedHeaders {
 		if header == "host" {
+			// For some reason the host header was blank (thanks echo?)
 			s += strings.ToLower(header) + ":" + strings.TrimSpace(c.Request().Host) + "\n"
 			continue
 		}
