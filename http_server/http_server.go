@@ -166,7 +166,8 @@ func getCanonicalRequest(c echo.Context) (string, error) {
 
 	s += strings.Join(signedHeaders, ";") + "\n"
 
-	s += c.Request().Header.Get("x-amz-content-sha256")
+	shaHeader := c.Request().Header.Get("x-amz-content-sha256")
+	s += lo.Ternary(shaHeader == "", "UNSIGNED-PAYLOAD", shaHeader)
 
 	return s, nil
 }
