@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/samber/lo"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -139,7 +138,7 @@ var (
 	ErrNoSignedHeaders = errors.New("no signed headers")
 )
 
-func getCanonicalRequest(c echo.Context, body []byte) (string, error) {
+func getCanonicalRequest(c echo.Context) (string, error) {
 	s := ""
 	s += c.Request().Method + "\n"
 	s += c.Request().URL.EscapedPath() + "\n"
@@ -167,7 +166,7 @@ func getCanonicalRequest(c echo.Context, body []byte) (string, error) {
 
 	s += strings.Join(signedHeaders, ";") + "\n"
 
-	s += fmt.Sprintf("%x", getSHA256(body))
+	s += c.Request().Header.Get("x-amz-content-sha256")
 
 	return s, nil
 }
@@ -201,13 +200,8 @@ func (s *HTTPServer) HandlePost(c echo.Context) error {
 
 	// awsID := "testuser"
 	// awsSecret := "testpassword"
-	defer c.Request().Body.Close()
-	bodyBytes, err := io.ReadAll(c.Request().Body)
-	if err != nil {
-		return fmt.Errorf("error in ReadAll of body: %w", err)
-	}
 
-	canonicalRequest, err := getCanonicalRequest(c, bodyBytes)
+	canonicalRequest, err := getCanonicalRequest(c)
 	if err != nil {
 		return fmt.Errorf("error in getCanonicalRequest: %w", err)
 	}
