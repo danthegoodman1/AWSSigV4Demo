@@ -53,7 +53,7 @@ func StartHTTPServer() *HTTPServer {
 
 	// technical - no auth
 	s.Echo.GET("/hc", s.HealthCheck)
-	s.Echo.POST("/", s.HandlePost)
+	s.Echo.POST("/", s.HandlePost, verifyAWSRequest)
 
 	s.Echo.Listener = listener
 	go func() {
@@ -134,22 +134,15 @@ func getSHA256(data []byte) []byte {
 	return hash.Sum(nil)
 }
 
-var (
-	ErrNoSignedHeaders = errors.New("no signed headers")
-)
-
-func getCanonicalRequest(c echo.Context) (string, error) {
+func getCanonicalRequest(c echo.Context) string {
 	s := ""
 	s += c.Request().Method + "\n"
 	s += c.Request().URL.EscapedPath() + "\n"
 	s += c.Request().URL.Query().Encode() + "\n"
 
-	signedHeadersList, found := lo.Find(strings.Split(c.Request().Header.Get("Authorization"), ", "), func(item string) bool {
+	signedHeadersList, _ := lo.Find(strings.Split(c.Request().Header.Get("Authorization"), ", "), func(item string) bool {
 		return strings.HasPrefix(item, "SignedHeaders")
 	})
-	if !found {
-		return "", ErrNoSignedHeaders
-	}
 
 	signedHeaders := strings.Split(strings.ReplaceAll(strings.ReplaceAll(signedHeadersList, "SignedHeaders=", ""), ",", ""), ";")
 	sort.Strings(signedHeaders) // must be sorted alphabetically
@@ -169,7 +162,7 @@ func getCanonicalRequest(c echo.Context) (string, error) {
 	shaHeader := c.Request().Header.Get("x-amz-content-sha256")
 	s += lo.Ternary(shaHeader == "", "UNSIGNED-PAYLOAD", shaHeader)
 
-	return s, nil
+	return s
 }
 
 func getStringToSign(c echo.Context, canonicalRequest string) string {
@@ -191,6 +184,32 @@ func getSigningKey(c echo.Context) []byte {
 	return signingKey
 }
 
+var (
+	ErrInvalidSignature = echo.NewHTTPError(403, "invalid signature")
+)
+
+func verifyAWSRequest(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		canonicalRequest := getCanonicalRequest(c)
+		stringToSign := getStringToSign(c, canonicalRequest)
+		signingKey := getSigningKey(c)
+		signature := fmt.Sprintf("%x", getHMAC(signingKey, []byte(stringToSign)))
+
+		providedSignature, _ := lo.Find(strings.Split(c.Request().Header.Get("Authorization"), ", "), func(item string) bool {
+			return strings.HasPrefix(item, "Signature")
+		})
+		providedSignature = strings.Split(providedSignature, "=")[1]
+
+		if signature != providedSignature {
+			return ErrInvalidSignature
+		}
+
+		fmt.Println("signature is valid!")
+
+		return next(c)
+	}
+}
+
 func (s *HTTPServer) HandlePost(c echo.Context) error {
 
 	for header, vals := range c.Request().Header {
@@ -202,26 +221,23 @@ func (s *HTTPServer) HandlePost(c echo.Context) error {
 	// awsID := "testuser"
 	// awsSecret := "testpassword"
 
-	canonicalRequest, err := getCanonicalRequest(c)
-	if err != nil {
-		return fmt.Errorf("error in getCanonicalRequest: %w", err)
-	}
-	fmt.Printf("\n============= Canonical request:\n%s\n", canonicalRequest)
-	stringToSign := getStringToSign(c, canonicalRequest)
-	fmt.Printf("\n============= String to sign:\n%s\n", stringToSign)
-
-	signingKey := getSigningKey(c)
-	signature := fmt.Sprintf("%x", getHMAC(signingKey, []byte(stringToSign)))
-
-	fmt.Printf("\nFINAL Signature: %s\n", signature)
-
-	providedSignature, _ := lo.Find(strings.Split(c.Request().Header.Get("Authorization"), ", "), func(item string) bool {
-		return strings.HasPrefix(item, "Signature")
-	})
-	providedSignature = strings.Split(providedSignature, "=")[1]
-
-	fmt.Println(providedSignature)
-	fmt.Println(signature)
+	// canonicalRequest := getCanonicalRequest(c)
+	// fmt.Printf("\n============= Canonical request:\n%s\n", canonicalRequest)
+	// stringToSign := getStringToSign(c, canonicalRequest)
+	// fmt.Printf("\n============= String to sign:\n%s\n", stringToSign)
+	//
+	// signingKey := getSigningKey(c)
+	// signature := fmt.Sprintf("%x", getHMAC(signingKey, []byte(stringToSign)))
+	//
+	// fmt.Printf("\nFINAL Signature: %s\n", signature)
+	//
+	// providedSignature, _ := lo.Find(strings.Split(c.Request().Header.Get("Authorization"), ", "), func(item string) bool {
+	// 	return strings.HasPrefix(item, "Signature")
+	// })
+	// providedSignature = strings.Split(providedSignature, "=")[1]
+	//
+	// fmt.Println(providedSignature)
+	// fmt.Println(signature)
 
 	return c.String(http.StatusOK, "Signature is valid")
 }
